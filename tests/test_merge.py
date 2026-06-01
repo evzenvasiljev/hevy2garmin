@@ -203,7 +203,7 @@ class TestBuildPayload:
         assert shoulder_steps == {1}
 
     def test_category_string_mapping(self):
-        """Exercise categories are strings, not ints."""
+        """Exercise categories and names use Garmin API strings, not FIT ints."""
         payload = build_exercise_sets_payload(
             HEVY_WORKOUT,
             activity_id=12345,
@@ -212,7 +212,20 @@ class TestBuildPayload:
         )
         first_active = next(s for s in payload["exerciseSets"] if s["setType"] == "ACTIVE")
         assert first_active["exercises"][0]["category"] == "BENCH_PRESS"
-        assert isinstance(first_active["exercises"][0]["name"], str)
+        assert first_active["exercises"][0]["name"] == "BARBELL_BENCH_PRESS"
+        assert first_active["exercises"][0]["probability"] == 100.0
+
+    def test_subcategory_string_mapping(self):
+        """Different mapped exercises keep distinct Garmin exercise names."""
+        payload = build_exercise_sets_payload(
+            HEVY_WORKOUT,
+            activity_id=12345,
+            activity_start_time="2026-03-15 18:00:00",
+            activity_duration_s=45 * 60,
+        )
+        active = [s for s in payload["exerciseSets"] if s["setType"] == "ACTIVE"]
+        assert active[3]["exercises"][0]["category"] == "SHOULDER_PRESS"
+        assert active[3]["exercises"][0]["name"] == "OVERHEAD_DUMBBELL_PRESS"
 
     def test_empty_workout(self):
         """Workout with no exercises produces empty sets list."""

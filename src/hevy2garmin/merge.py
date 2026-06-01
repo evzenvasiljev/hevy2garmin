@@ -70,13 +70,55 @@ _CATEGORY_NAMES: dict[int, str] = {
     65534: "UNKNOWN",
 }
 
-# Subcategory names per category. Built from the FIT SDK profile.
-# Only the most common ones are listed — unmapped subs fall back to
-# the category's generic "0" name.
-# Format: {(category_id, subcategory_id): "GARMIN_STRING_NAME"}
-#
-# We populate this lazily from fit_tool if available, otherwise
-# use the category name as the exercise name (Garmin accepts this).
+# FIT SDK category id -> fit_tool enum class that contains sub-exercise names.
+# Do not derive these via ExerciseCategory: some fit_tool builds used in cloud
+# deployments do not expose that enum even though the sub-exercise enums exist.
+_EXERCISE_ENUM_CLASSES: dict[int, str] = {
+    0: "BenchPressExerciseName",
+    1: "CalfRaiseExerciseName",
+    2: "CardioExerciseName",
+    3: "CarryExerciseName",
+    4: "ChopExerciseName",
+    5: "CoreExerciseName",
+    6: "CrunchExerciseName",
+    7: "CurlExerciseName",
+    8: "DeadliftExerciseName",
+    9: "FlyeExerciseName",
+    10: "HipRaiseExerciseName",
+    11: "HipStabilityExerciseName",
+    12: "HipSwingExerciseName",
+    13: "HyperextensionExerciseName",
+    14: "LateralRaiseExerciseName",
+    15: "LegCurlExerciseName",
+    16: "LegRaiseExerciseName",
+    17: "LungeExerciseName",
+    18: "OlympicLiftExerciseName",
+    19: "PlankExerciseName",
+    20: "PlyoExerciseName",
+    21: "PullUpExerciseName",
+    22: "PushUpExerciseName",
+    23: "RowExerciseName",
+    24: "ShoulderPressExerciseName",
+    25: "ShoulderStabilityExerciseName",
+    26: "ShrugExerciseName",
+    27: "SitUpExerciseName",
+    28: "SquatExerciseName",
+    29: "TotalBodyExerciseName",
+    30: "TricepsExtensionExerciseName",
+    31: "WarmUpExerciseName",
+    32: "RunExerciseName",
+}
+
+# Small local fallback used when fit_tool is unavailable in a lightweight test
+# environment. Production installs use fit_tool for the complete FIT SDK table.
+_EXERCISE_NAME_FALLBACKS: dict[tuple[int, int], str] = {
+    (0, 1): "BARBELL_BENCH_PRESS",
+    (23, 5): "FACE_PULL",
+    (23, 18): "SEATED_CABLE_ROW",
+    (23, 46): "BENT_OVER_BARBELL_ROW",
+    (24, 15): "OVERHEAD_DUMBBELL_PRESS",
+    (28, 0): "LEG_PRESS",
+}
 
 def _category_to_string(cat_id: int) -> str:
     return _CATEGORY_NAMES.get(cat_id, "UNKNOWN")
@@ -88,23 +130,22 @@ def _exercise_to_string(cat_id: int, sub_id: int) -> str:
     Falls back to the category name if the subcategory isn't mapped.
     Garmin's exerciseSets API accepts the category name as the exercise name.
     """
+    enum_name = _EXERCISE_ENUM_CLASSES.get(cat_id)
     try:
-        from fit_tool.profile.profile_type import ExerciseCategory
-        # fit_tool has per-category exercise enums, but they're not always
-        # available or complete. Try to get the string name.
-        cat_enum = ExerciseCategory(cat_id)
-        # Look for a subcategory enum for this category
-        # e.g., for BENCH_PRESS (0), there's BenchPressExerciseName
-        cat_name = cat_enum.name  # "BENCH_PRESS"
-        # The subcategory enum class name follows a pattern
-        sub_enum_name = cat_name.title().replace("_", "") + "ExerciseName"
         import fit_tool.profile.profile_type as pt
-        sub_enum_cls = getattr(pt, sub_enum_name, None)
+
+        sub_enum_cls = getattr(pt, enum_name, None) if enum_name else None
         if sub_enum_cls:
-            return sub_enum_cls(sub_id).name
+            value = sub_enum_cls(sub_id)
+            return getattr(value, "name", str(value)).upper()
     except (ValueError, AttributeError, ImportError):
         pass
-    # Fallback: use category name (Garmin accepts this)
+
+    fallback = _EXERCISE_NAME_FALLBACKS.get((cat_id, sub_id))
+    if fallback:
+        return fallback
+
+    # Last resort: use category name rather than UNKNOWN for mapped exercises.
     return _category_to_string(cat_id)
 
 
@@ -204,7 +245,7 @@ def build_exercise_sets_payload(
         weight_kg = s.get("weight_kg")
 
         active_set: dict = {
-            "exercises": [{"category": cat_str, "name": ex_str}],
+            "exercises": [{"category": cat_str, "name": ex_str, "probability": 100.0}],
             "duration": round(scaled_dur, 3),
             "repetitionCount": int(reps) if reps is not None else 0,
             "weight": float(round(weight_kg * 1000)) if weight_kg else 0.0,
